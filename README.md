@@ -169,6 +169,25 @@ As a service: `deploy/systemd/arc.service` (Linux),
 not a LaunchDaemon, or code signing will fail),
 `deploy/windows/install-service.ps1` (Windows).
 
+### 6. Removing a host
+
+```sh
+arc uninstall                  # -keep-config to leave a reinstall one command away
+```
+
+It stops and removes the service, destroys this host's runners and deregisters
+them from GitHub, deletes this host's webhooks, and removes the files arc
+created. It shows what it will do and asks first (`-yes` skips the prompt).
+
+A runner executing a job stops it: uninstalling would fail a live build, so it
+names the runners and exits without changing anything. `-force` overrides that.
+Other arc hosts on the same account are never touched — runner names and webhook
+paths carry a host id, and only this host's are removed.
+
+Two things are deliberately left behind: `~/.arc/env`, `/etc/arc/env` and
+`%LOCALAPPDATA%\arc\op-token.txt`, because you put those credentials there, and
+the binary itself.
+
 ## Host tooling for process pools
 
 Docker pools get their tools from the image. **Process pools get them from the
@@ -254,6 +273,9 @@ arc resume windows
 | Command | What it does |
 | --- | --- |
 | `arc run` | Start the orchestrator |
+| `arc install [-max N]` | Install and start the background service |
+| `arc start` / `arc stop` | Control the installed service |
+| `arc uninstall [-yes] [-force] [-keep-config]` | Remove the service, this host's runners and arc's files |
 | `arc status [-wide] [-json] [-watch 2s]` | Pools, runners, queued jobs |
 | `arc scale <pool> [-min N] [-max N] [-reset]` | Change limits at runtime |
 | `arc drain <pool>` / `arc resume <pool>` | Stop / restart runner creation |

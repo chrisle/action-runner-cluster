@@ -25,6 +25,7 @@ Usage:
 Commands:
   run       Start the orchestrator in the foreground
   install   Install arc as a background service and start it
+  uninstall Remove the service, this host's runners and arc's files
   start     Start the installed background service
   stop      Stop the installed background service
   config    Create or edit the configuration with a wizard
@@ -61,6 +62,8 @@ func main() {
 		err = cmdRun(os.Args[2:])
 	case "install":
 		err = cmdInstall(os.Args[2:])
+	case "uninstall":
+		err = cmdUninstall(os.Args[2:])
 	case "start", "stop":
 		err = cmdStartStop(os.Args[1])
 	case "config":

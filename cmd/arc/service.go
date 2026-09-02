@@ -67,6 +67,72 @@ func cmdStartStop(action string) error {
 	}
 }
 
+// serviceDescription names the service in a way that matches what the host's
+// own tooling calls it, so an uninstall says what it is about to remove.
+func serviceDescription() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "launchd agent " + launchdLabel
+	case "linux":
+		return "systemd unit arc.service"
+	case "windows":
+		return `scheduled task "arc"`
+	default:
+		return "background service"
+	}
+}
+
+// removeService stops the installed service and removes its definition. It is
+// idempotent: a service that was never installed, or already removed, is not
+// an error — `arc uninstall` has to work on a half-finished install.
+func removeService() error {
+	switch runtime.GOOS {
+	case "darwin":
+		// bootout fails when nothing is loaded, which is the state we want.
+		_ = exec.Command("launchctl", "bootout",
+			fmt.Sprintf("gui/%d/%s", os.Getuid(), launchdLabel)).Run()
+		return removeIfPresent(launchdPlistPath())
+	case "linux":
+		if err := serviceNeedsRoot(); err != nil {
+			return err
+		}
+		_ = exec.Command("systemctl", "disable", "--now", "arc").Run()
+		if err := removeIfPresent("/etc/systemd/system/arc.service"); err != nil {
+			return err
+		}
+		return runCmd("systemctl", "daemon-reload")
+	case "windows":
+		_ = exec.Command("schtasks", "/End", "/TN", "arc").Run()
+		// /Delete reports its own failure when the task does not exist; that
+		// is the desired end state, so only a surprising failure is surfaced.
+		out, err := exec.Command("schtasks", "/Delete", "/TN", "arc", "/F").CombinedOutput()
+		if err != nil && !strings.Contains(strings.ToLower(string(out)),
+			"cannot find the file specified") {
+			return fmt.Errorf("schtasks /Delete: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return removeIfPresent(filepath.Join(os.Getenv("LOCALAPPDATA"), "arc", "run-arc.ps1"))
+	default:
+		return fmt.Errorf("no service installer for %s", runtime.GOOS)
+	}
+}
+
+// serviceNeedsRoot reports whether this host's service can be removed by the
+// current user. Only systemd's unit lives outside the user's own domain.
+func serviceNeedsRoot() error {
+	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
+		return fmt.Errorf("removing the systemd service needs root: sudo arc uninstall")
+	}
+	return nil
+}
+
+// removeIfPresent deletes path, treating "already gone" as success.
+func removeIfPresent(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func runCmd(name string, args ...string) error {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
