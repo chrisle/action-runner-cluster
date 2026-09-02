@@ -334,7 +334,7 @@ func (o *Orchestrator) reap(ctx context.Context, pool *config.Pool, instances []
 			// An ephemeral runner exits after exactly one job, so this is the
 			// normal end of life, not a failure.
 			o.log.Debug("reaping finished runner", "pool", pool.Name, "runner", inst.RunnerName, "detail", inst.Detail)
-			o.destroyInstance(ctx, pool, inst, byName, "finished")
+			_ = o.destroyInstance(ctx, pool, inst, byName, "finished")
 
 		case inst.Age() > pool.JobTimeout.Duration():
 			// A job that outlives job_timeout is stuck: GitHub's own timeout
@@ -343,7 +343,7 @@ func (o *Orchestrator) reap(ctx context.Context, pool *config.Pool, instances []
 			o.log.Warn("runner exceeded job_timeout, destroying",
 				"pool", pool.Name, "runner", inst.RunnerName,
 				"age", inst.Age().Round(time.Second), "timeout", pool.JobTimeout)
-			o.destroyInstance(ctx, pool, inst, byName, "job timeout")
+			_ = o.destroyInstance(ctx, pool, inst, byName, "job timeout")
 
 		default:
 			live = append(live, inst)
@@ -373,8 +373,12 @@ func (o *Orchestrator) reap(ctx context.Context, pool *config.Pool, instances []
 	return live
 }
 
-// destroyInstance removes the instance and its GitHub registration.
-func (o *Orchestrator) destroyInstance(ctx context.Context, pool *config.Pool, inst provider.Instance, byName map[string]ghapi.Runner, why string) {
+// destroyInstance removes the instance and its GitHub registration. It returns
+// ghapi.ErrRunnerBusy when the runner picked up a job and was left alone, and
+// nil once nothing of the instance remains. The reconcile loop ignores the
+// result — it logs as it goes and the next tick retries — but Teardown reports
+// it, because an uninstall has no next tick.
+func (o *Orchestrator) destroyInstance(ctx context.Context, pool *config.Pool, inst provider.Instance, byName map[string]ghapi.Runner, why string) error {
 	// Deregister first. If the instance is destroyed first, GitHub keeps an
 	// offline runner listed and may still try to route a job to it.
 	if r, ok := byName[inst.RunnerName]; ok {
@@ -382,7 +386,7 @@ func (o *Orchestrator) destroyInstance(ctx context.Context, pool *config.Pool, i
 			if errors.Is(err, ghapi.ErrRunnerBusy) {
 				o.log.Info("runner picked up a job, leaving it alone",
 					"pool", pool.Name, "runner", inst.RunnerName)
-				return
+				return err
 			}
 			o.log.Warn("deregister failed, destroying anyway",
 				"pool", pool.Name, "runner", inst.RunnerName, "error", err)
@@ -392,12 +396,13 @@ func (o *Orchestrator) destroyInstance(ctx context.Context, pool *config.Pool, i
 	if err := o.providers[pool.Name].Destroy(ctx, inst.ID); err != nil {
 		o.log.Error("destroy instance failed",
 			"pool", pool.Name, "runner", inst.RunnerName, "reason", why, "error", err)
-		return
+		return fmt.Errorf("destroy runner %s: %w", inst.RunnerName, err)
 	}
 
 	o.mu.Lock()
 	delete(o.idleSince, instanceKey(pool.Name, inst.RunnerName))
 	o.mu.Unlock()
+	return nil
 }
 
 // applyPool computes and executes the decision for a single pool. jobs are the
@@ -595,7 +600,7 @@ func (o *Orchestrator) scaleDown(ctx context.Context, pool *config.Pool, live []
 
 	o.log.Info("scaling down", "pool", pool.Name, "count", len(eligible))
 	for _, c := range eligible {
-		o.destroyInstance(ctx, pool, c.inst, byName, "idle surplus")
+		_ = o.destroyInstance(ctx, pool, c.inst, byName, "idle surplus")
 	}
 }
 

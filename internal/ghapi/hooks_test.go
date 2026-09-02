@@ -83,3 +83,39 @@ func TestEnsureWebhookCreatesWhenMissing(t *testing.T) {
 		t.Error("hook was not created")
 	}
 }
+
+func TestDeleteWebhookOnlyRemovesOwnHostsHook(t *testing.T) {
+	var mu sync.Mutex
+	var deleted []string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/chrisle/app/hooks":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": 5, "config": map[string]any{"url": "https://a.trycloudflare.com/arc/webhook/aaaaaa"}},
+				{"id": 6, "config": map[string]any{"url": "https://b.trycloudflare.com/arc/webhook/ffffff"}},
+				{"id": 7, "config": map[string]any{"url": "https://ci.example.com/some-other-hook"}},
+			})
+		case r.Method == http.MethodDelete:
+			mu.Lock()
+			deleted = append(deleted, r.URL.Path)
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	c, _ := ownerClient(t, handler)
+
+	n, err := c.DeleteWebhook(context.Background(), "app",
+		"https://c.trycloudflare.com/arc/webhook/aaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("deleted %d hooks, want 1", n)
+	}
+	if len(deleted) != 1 || deleted[0] != "/repos/chrisle/app/hooks/5" {
+		t.Errorf("deleted = %v, want only this host's hook 5", deleted)
+	}
+}

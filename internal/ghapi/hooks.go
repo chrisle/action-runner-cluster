@@ -38,27 +38,12 @@ type hookInfo struct {
 // path never does. The secret rotates on every arc start, so an existing
 // hook is always rewritten.
 func (c *Client) EnsureWebhook(ctx context.Context, repo, url, secret string) error {
-	marker := url
-	if i := strings.Index(url, WebhookPath); i >= 0 {
-		marker = url[i:]
-	}
+	marker := hookMarker(url)
+	base := c.hooksBase(repo)
 
-	base := fmt.Sprintf("/orgs/%s/hooks", c.org)
-	if repo != "" {
-		base = fmt.Sprintf("/repos/%s/%s/hooks", c.entity(), repo)
-	}
-
-	var existing []hookInfo
-	err := c.paginate(ctx, base+"?per_page=100", "", func(page []byte) error {
-		var hooks []hookInfo
-		if err := json.Unmarshal(page, &hooks); err != nil {
-			return fmt.Errorf("decode hooks: %w", err)
-		}
-		existing = append(existing, hooks...)
-		return nil
-	})
+	existing, err := c.listHooks(ctx, base)
 	if err != nil {
-		return fmt.Errorf("list hooks: %w", err)
+		return err
 	}
 
 	body := map[string]any{
@@ -87,4 +72,68 @@ func (c *Client) EnsureWebhook(ctx context.Context, repo, url, secret string) er
 		return fmt.Errorf("create hook: %w", err)
 	}
 	return nil
+}
+
+// DeleteWebhook removes this host's arc webhook from repo (or the org, when
+// repo is empty) and reports how many it deleted. url identifies the hook the
+// same way EnsureWebhook does — by its path, which carries the host id — so
+// uninstalling one host never unhooks another. Zero deleted is the normal
+// answer for an account that never had webhooks registered.
+func (c *Client) DeleteWebhook(ctx context.Context, repo, url string) (int, error) {
+	marker := hookMarker(url)
+	base := c.hooksBase(repo)
+
+	existing, err := c.listHooks(ctx, base)
+	if err != nil {
+		return 0, err
+	}
+
+	deleted := 0
+	for _, h := range existing {
+		if !strings.HasSuffix(h.Config.URL, marker) {
+			continue
+		}
+		path := fmt.Sprintf("%s/%d", base, h.ID)
+		if _, _, err := c.request(ctx, http.MethodDelete, path, nil, ""); err != nil {
+			if IsNotFound(err) {
+				continue // already gone; the desired state holds
+			}
+			return deleted, fmt.Errorf("delete hook %d: %w", h.ID, err)
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
+// hookMarker reduces a webhook URL to the part that identifies an arc host.
+// Tunnel hostnames change on every start; the path never does.
+func hookMarker(url string) string {
+	if i := strings.Index(url, WebhookPath); i >= 0 {
+		return url[i:]
+	}
+	return url
+}
+
+// hooksBase is the API path for a repo's hooks, or the org's when repo is empty.
+func (c *Client) hooksBase(repo string) string {
+	if repo != "" {
+		return fmt.Sprintf("/repos/%s/%s/hooks", c.entity(), repo)
+	}
+	return fmt.Sprintf("/orgs/%s/hooks", c.org)
+}
+
+func (c *Client) listHooks(ctx context.Context, base string) ([]hookInfo, error) {
+	var all []hookInfo
+	err := c.paginate(ctx, base+"?per_page=100", "", func(page []byte) error {
+		var hooks []hookInfo
+		if err := json.Unmarshal(page, &hooks); err != nil {
+			return fmt.Errorf("decode hooks: %w", err)
+		}
+		all = append(all, hooks...)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list hooks: %w", err)
+	}
+	return all, nil
 }

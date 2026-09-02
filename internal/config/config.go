@@ -376,7 +376,7 @@ func (c *Config) applyDefaults() {
 		c.Server.Addr = DefaultAddr
 	}
 	if c.Server.StateDir == "" {
-		c.Server.StateDir = defaultStateDir()
+		c.Server.StateDir = DefaultStateDir()
 	}
 	if c.Log.Level == "" {
 		c.Log.Level = "info"
@@ -651,7 +651,10 @@ func (c *Config) EffectiveRunnerGroup(p *Pool) string {
 	return c.GitHub.RunnerGroup
 }
 
-func defaultStateDir() string {
+// DefaultStateDir is where the orchestrator keeps its small persisted state
+// when the config does not say otherwise. `arc uninstall` needs it by name to
+// clean up after a config that no longer loads.
+func DefaultStateDir() string {
 	if dir, err := os.UserConfigDir(); err == nil {
 		return filepath.Join(dir, "action-runner-cluster")
 	}
