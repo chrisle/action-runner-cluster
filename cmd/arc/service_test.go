@@ -38,6 +38,22 @@ func TestSystemdUnit(t *testing.T) {
 	}
 }
 
+func TestWindowsTaskAction(t *testing.T) {
+	a := windowsTaskAction(`C:\Users\c\AppData\Local\arc\run-arc.ps1`)
+	// conhost --headless is what keeps a PowerShell window off the desktop:
+	// launching powershell.exe directly gets handed off to Windows Terminal,
+	// which ignores -WindowStyle Hidden.
+	if !strings.HasPrefix(a, "conhost.exe --headless powershell.exe ") {
+		t.Errorf("task action does not go through headless conhost: %s", a)
+	}
+	if strings.Contains(a, "-WindowStyle") {
+		t.Errorf("-WindowStyle does not work through the task scheduler: %s", a)
+	}
+	if !strings.Contains(a, `-File "C:\Users\c\AppData\Local\arc\run-arc.ps1"`) {
+		t.Errorf("task action does not run the launcher script: %s", a)
+	}
+}
+
 func TestWindowsLauncher(t *testing.T) {
 	l := windowsLauncher(`C:\Users\c\arc.exe`, 2)
 	for _, want := range []string{

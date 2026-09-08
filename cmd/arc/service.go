@@ -272,6 +272,20 @@ while ($true) {
 `, exe, max)
 }
 
+// windowsTaskAction is the command the scheduled task runs.
+//
+// It goes through conhost --headless rather than launching powershell.exe
+// directly: on Windows 11 a console process started by the task scheduler is
+// handed off to Windows Terminal, which honours neither -WindowStyle Hidden nor
+// the task's own "run whether user is logged on or not", so arc leaves a
+// PowerShell window sitting on the desktop for the whole session. --headless
+// allocates the console without a window and bypasses the handoff.
+func windowsTaskAction(launcher string) string {
+	return fmt.Sprintf(
+		`conhost.exe --headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%s"`,
+		launcher)
+}
+
 func installTask(exe string, max int) error {
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "arc")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -281,8 +295,8 @@ func installTask(exe string, max int) error {
 	if err := os.WriteFile(launcher, []byte(windowsLauncher(exe, max)), 0o644); err != nil {
 		return err
 	}
-	tr := fmt.Sprintf(`powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%s"`, launcher)
-	if err := runCmd("schtasks", "/Create", "/F", "/TN", "arc", "/SC", "ONLOGON", "/TR", tr); err != nil {
+	if err := runCmd("schtasks", "/Create", "/F", "/TN", "arc", "/SC", "ONLOGON",
+		"/TR", windowsTaskAction(launcher)); err != nil {
 		return err
 	}
 	if err := runCmd("schtasks", "/Run", "/TN", "arc"); err != nil {

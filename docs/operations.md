@@ -26,6 +26,13 @@
 | Linux | systemd unit `arc.service` | `sudo arc install`, runs as the invoking user. Logs: `journalctl -u arc` |
 | Windows | logon scheduled task `arc` | A launcher loop restarts arc if it exits. Log: `%LOCALAPPDATA%\arc\arc.log` |
 
+On Windows the task runs through `conhost.exe --headless`, which is what keeps
+arc off the desktop: a console process started by the task scheduler is
+otherwise handed off to Windows Terminal, which ignores `-WindowStyle Hidden`
+and leaves a PowerShell window open for the whole session. A host installed
+before this landed keeps the old action until you rerun `arc install`, which
+rewrites the task in place.
+
 `arc start` / `arc stop` drive it afterwards. Restarts never kill runners — they
 finish their job and exit, and arc re-adopts what it finds. Hand-written unit
 files are in `deploy/` if you'd rather manage the service yourself.
