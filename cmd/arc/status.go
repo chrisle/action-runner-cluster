@@ -66,7 +66,9 @@ func printStatus(snap orchestrator.Snapshot, wide bool) {
 	}
 
 	age := time.Since(snap.UpdatedAt).Round(time.Second)
-	fmt.Printf("org %s · %d repos watched · updated %s ago\n", snap.Org, snap.ReposWatched, age)
+	// "account" rather than "org": the same field holds a personal login
+	// when arc registers runners per repo.
+	fmt.Printf("account %s · %d repos watched · updated %s ago\n", snap.Org, snap.ReposWatched, age)
 	if snap.RateLimit.Limit > 0 {
 		fmt.Printf("github rate limit: %d/%d remaining, resets %s\n",
 			snap.RateLimit.Remaining, snap.RateLimit.Limit,
