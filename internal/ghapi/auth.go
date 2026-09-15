@@ -26,6 +26,23 @@ type Authenticator interface {
 	Describe() string
 }
 
+// Refresher is an Authenticator whose credential comes from an external store
+// and can be re-read after GitHub rejects the one in hand.
+//
+// A classic PAT expires on a date, not on a schedule arc can anticipate. Without
+// a way to re-read it mid-run, an expiry is terminal: the process keeps
+// presenting the dead token and every reconcile logs "401 Bad credentials" until
+// someone restarts the service — which on macOS and Windows kills whatever is
+// building at the time.
+type Refresher interface {
+	Authenticator
+	// Refresh re-reads the credential from its source, unless another caller
+	// has already replaced stale. It reports whether the credential now in
+	// hand differs from stale, so a caller does not retry with a token GitHub
+	// has already refused.
+	Refresh(ctx context.Context, stale string) (bool, error)
+}
+
 // StaticToken authenticates with a personal access token.
 type StaticToken struct{ Value string }
 

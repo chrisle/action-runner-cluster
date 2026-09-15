@@ -73,10 +73,16 @@ arc install -max 4
 It reads the vault once, caches the result at `~/.arc/credentials.json` so
 restarts never prompt through the `op` CLI, decides for itself whether the login
 is a user or an org, builds a pool for this machine's platform, and turns on
-webhook-driven scaling. The cache is refreshed automatically when the token is
-rotated or revoked; if GitHub is unreachable but the cache was validated before,
-arc comes up anyway rather than being a service that cannot boot without
+webhook-driven scaling. If GitHub is unreachable but the cache was validated
+before, arc comes up anyway rather than being a service that cannot boot without
 network.
+
+The cache is refreshed automatically when GitHub rejects the token, both at
+startup and while arc is running — a PAT that expires mid-run is picked up from
+the vault on the next rejected request, without a restart that would kill
+whatever is building. While the vault still holds the rejected token there is
+nothing to pick up, so re-reads are throttled to one every five minutes; rotate
+the `credential` field and arc recovers on its own within that window.
 
 Set the item up with:
 

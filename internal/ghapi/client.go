@@ -60,8 +60,17 @@ type RateLimit struct {
 	Seen      time.Time `json:"seen"`
 }
 
+// Option adjusts a Client at construction.
+type Option func(*Client)
+
+// WithAuthenticator overrides the credential derived from config. Vault-backed
+// modes use it to supply a Refresher in place of a StaticToken.
+func WithAuthenticator(a Authenticator) Option {
+	return func(c *Client) { c.auth = a }
+}
+
 // New builds a client from config.
-func New(cfg *config.Config, log *slog.Logger) (*Client, error) {
+func New(cfg *config.Config, log *slog.Logger, opts ...Option) (*Client, error) {
 	hc := &http.Client{Timeout: 30 * time.Second}
 
 	var auth Authenticator
@@ -79,7 +88,7 @@ func New(cfg *config.Config, log *slog.Logger) (*Client, error) {
 		return nil, errors.New("no GitHub credentials configured")
 	}
 
-	return &Client{
+	c := &Client{
 		apiURL: strings.TrimSuffix(cfg.GitHub.APIURL, "/"),
 		webURL: strings.TrimSuffix(cfg.GitHub.WebURL, "/"),
 		org:    cfg.GitHub.Org,
@@ -88,7 +97,11 @@ func New(cfg *config.Config, log *slog.Logger) (*Client, error) {
 		http:   hc,
 		log:    log,
 		etags:  newETagCache(),
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c, nil
 }
 
 // Org returns the account runners belong to: the org, or the personal owner.
@@ -249,7 +262,27 @@ func (c *Client) request(ctx context.Context, method, path string, body any, eta
 		}
 
 		apiErr := &APIError{Status: resp.StatusCode, Message: extractMessage(data), URL: url}
-		// 5xx is worth another try; 4xx will fail identically every time.
+
+		// 401 is the one 4xx that a retry can fix: the credential may have
+		// expired since it was loaded, and its source may already hold the
+		// replacement. Only a genuinely different token is worth another
+		// attempt — otherwise this falls through and fails as before.
+		if resp.StatusCode == http.StatusUnauthorized && attempt < maxRetries {
+			if r, ok := c.auth.(Refresher); ok {
+				switch changed, rerr := r.Refresh(ctx, token); {
+				case rerr != nil:
+					c.log.Error("github rejected the credential and re-reading it failed",
+						"error", rerr)
+				case changed:
+					c.log.Warn("github rejected the credential; re-read a new one from its source",
+						"url", url)
+					lastErr = apiErr
+					continue
+				}
+			}
+		}
+
+		// 5xx is worth another try; the rest fail identically every time.
 		if resp.StatusCode >= 500 && attempt < maxRetries {
 			lastErr = apiErr
 			continue

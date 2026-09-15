@@ -34,7 +34,7 @@ func cmdRun(args []string) error {
 		return err
 	}
 
-	cfg, err := loadConfigMax(*cfgPath, *maxRunners)
+	cfg, vaultCreds, err := loadConfigMax(*cfgPath, *maxRunners)
 	if err != nil {
 		return err
 	}
@@ -45,7 +45,13 @@ func cmdRun(args []string) error {
 	log := newLogger(cfg.Log)
 	log.Info("arc starting", "version", version, "config", cfg.Path)
 
-	gh, err := ghapi.New(cfg, log)
+	// In vault mode the credential can be re-read, so the client gets the
+	// refreshable one rather than the flat token copied into config.
+	var ghOpts []ghapi.Option
+	if vaultCreds != nil {
+		ghOpts = append(ghOpts, ghapi.WithAuthenticator(vaultCreds))
+	}
+	gh, err := ghapi.New(cfg, log, ghOpts...)
 	if err != nil {
 		return err
 	}
@@ -104,15 +110,20 @@ func cmdRun(args []string) error {
 	return runErr
 }
 
-// loadConfig resolves the config path and loads it.
+// loadConfig resolves the config path and loads it. One-shot commands use this
+// and discard any refreshable credential: they outlive no token.
 func loadConfig(path string) (*config.Config, error) {
-	return loadConfigMax(path, config.DefaultMaxRunners)
+	cfg, _, err := loadConfigMax(path, config.DefaultMaxRunners)
+	return cfg, err
 }
 
 // loadConfigMax resolves configuration: an explicit or discovered file wins;
 // with no file anywhere, configuration comes from the 1Password vault and the
 // host serves its own platform with at most maxRunners concurrent runners.
-func loadConfigMax(path string, maxRunners int) (*config.Config, error) {
+// It also returns the refreshable credential when configuration came from the
+// vault, so a long-running arc can recover from a token that expires under it.
+// File-based configuration has no source to re-read and gets a nil.
+func loadConfigMax(path string, maxRunners int) (*config.Config, *vaultAuth, error) {
 	explicit := path != ""
 	if path == "" {
 		path = os.Getenv("ARC_CONFIG")
@@ -131,17 +142,18 @@ func loadConfigMax(path string, maxRunners int) (*config.Config, error) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		if explicit {
-			return nil, fmt.Errorf("no config at %s", path)
+			return nil, nil, fmt.Errorf("no config at %s", path)
 		}
-		cfg, opErr := autoConfig(maxRunners)
+		cfg, auth, opErr := autoConfig(maxRunners)
 		if opErr != nil {
-			return nil, fmt.Errorf("no config file found and 1Password configuration "+
+			return nil, nil, fmt.Errorf("no config file found and 1Password configuration "+
 				"failed: %w\n(run `arc config` to create a file instead, pass -config, "+
 				"or set ARC_CONFIG)", opErr)
 		}
-		return cfg, nil
+		return cfg, auth, nil
 	}
-	return config.Load(path)
+	cfg, err := config.Load(path)
+	return cfg, nil, err
 }
 
 // loadVaultItem and probeAccountType are swapped out in tests.
@@ -172,7 +184,7 @@ var (
 // The vault is only read on the first run (or when its cached token stops
 // authenticating): the result is cached at ~/.arc/credentials.json so
 // restarts never depend on — or prompt through — the op CLI.
-func autoConfig(maxRunners int) (*config.Config, error) {
+func autoConfig(maxRunners int) (*config.Config, *vaultAuth, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -182,7 +194,7 @@ func autoConfig(maxRunners int) (*config.Config, error) {
 		var err error
 		item, err = loadVaultItem(ctx)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -193,12 +205,12 @@ func autoConfig(maxRunners int) (*config.Config, error) {
 		// The cached token was rotated or revoked — refresh from the vault.
 		fresh, opErr := loadVaultItem(ctx)
 		if opErr != nil {
-			return nil, fmt.Errorf("cached credentials were rejected by GitHub and the "+
+			return nil, nil, fmt.Errorf("cached credentials were rejected by GitHub and the "+
 				"1Password refresh failed: %w", opErr)
 		}
 		item, fromCache = fresh, false
 		if accountType, err = probeAccountType(ctx, item); err != nil {
-			return nil, fmt.Errorf("verify account %q with the vault token: %w", item.Login, err)
+			return nil, nil, fmt.Errorf("verify account %q with the vault token: %w", item.Login, err)
 		}
 	case fromCache && item.AccountType != "":
 		// GitHub is unreachable but the cache was validated before: come up
@@ -206,7 +218,7 @@ func autoConfig(maxRunners int) (*config.Config, error) {
 		// cannot boot without network.
 		accountType = item.AccountType
 	default:
-		return nil, fmt.Errorf("verify account %q with the vault token: %w", item.Login, err)
+		return nil, nil, fmt.Errorf("verify account %q with the vault token: %w", item.Login, err)
 	}
 
 	item.AccountType = accountType
@@ -228,17 +240,17 @@ func autoConfig(maxRunners int) (*config.Config, error) {
 	// Round-trip through the normal load pipeline for defaults + validation.
 	raw, err := cfg.Marshal()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out, err := config.Parse(raw)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out.Path = "1Password op://arc/github"
 	if fromCache {
 		out.Path += " (cached)"
 	}
-	return out, nil
+	return out, newVaultAuth(item), nil
 }
 
 // isAuthError reports a definitive credential rejection, as opposed to

@@ -36,7 +36,7 @@ func stubAutoConfig(t *testing.T) (*int, *opconfig.Item) {
 func TestAutoConfigReadsVaultOnceThenCache(t *testing.T) {
 	opCalls, _ := stubAutoConfig(t)
 
-	cfg, err := autoConfig(4)
+	cfg, _, err := autoConfig(4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestAutoConfigReadsVaultOnceThenCache(t *testing.T) {
 	}
 
 	// Second run must come from the cache — and still honor a new -max.
-	cfg2, err := autoConfig(8)
+	cfg2, _, err := autoConfig(8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestAutoConfigReadsVaultOnceThenCache(t *testing.T) {
 func TestAutoConfigRefreshesWhenCachedTokenRejected(t *testing.T) {
 	opCalls, vaultItem := stubAutoConfig(t)
 
-	if _, err := autoConfig(4); err != nil {
+	if _, _, err := autoConfig(4); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,7 +79,7 @@ func TestAutoConfigRefreshesWhenCachedTokenRejected(t *testing.T) {
 		return "", &ghapi.APIError{Status: http.StatusUnauthorized, Message: "bad credentials"}
 	}
 
-	cfg, err := autoConfig(4)
+	cfg, _, err := autoConfig(4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestAutoConfigRefreshesWhenCachedTokenRejected(t *testing.T) {
 
 func TestAutoConfigToleratesGitHubOutageWithValidatedCache(t *testing.T) {
 	opCalls, _ := stubAutoConfig(t)
-	if _, err := autoConfig(4); err != nil {
+	if _, _, err := autoConfig(4); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,7 +105,7 @@ func TestAutoConfigToleratesGitHubOutageWithValidatedCache(t *testing.T) {
 	probeAccountType = func(context.Context, *opconfig.Item) (string, error) {
 		return "", errors.New("dial tcp: network is unreachable")
 	}
-	cfg, err := autoConfig(4)
+	cfg, _, err := autoConfig(4)
 	if err != nil {
 		t.Fatalf("outage with validated cache should not fail: %v", err)
 	}
