@@ -1,6 +1,10 @@
 package ghapi
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"testing"
+)
 
 func TestJobSelfHosted(t *testing.T) {
 	tests := []struct {
@@ -84,5 +88,48 @@ func TestNextLink(t *testing.T) {
 	}
 	if got := nextLink(""); got != "" {
 		t.Errorf("nextLink of empty header = %q, want empty", got)
+	}
+}
+
+func TestPollJobsSplitsQueuedAndRunning(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/chrisle/app/actions/runs":
+			switch r.URL.Query().Get("status") {
+			case "queued":
+				_, _ = w.Write([]byte(`{"workflow_runs": [{"id": 1, "status": "queued", "head_branch": "main"}]}`))
+			case "in_progress":
+				_, _ = w.Write([]byte(`{"workflow_runs": [{"id": 2, "status": "in_progress", "head_branch": "feature/x"}]}`))
+			}
+		case "/repos/chrisle/app/actions/runs/1/jobs":
+			_, _ = w.Write([]byte(`{"jobs": [
+				{"id": 10, "run_id": 1, "name": "build", "status": "queued", "labels": ["self-hosted", "macos"]}
+			]}`))
+		case "/repos/chrisle/app/actions/runs/2/jobs":
+			_, _ = w.Write([]byte(`{"jobs": [
+				{"id": 20, "run_id": 2, "name": "test", "status": "in_progress", "labels": ["self-hosted", "macos"], "runner_name": "arc-macos-aabbccdd"},
+				{"id": 21, "run_id": 2, "name": "lint", "status": "completed", "labels": ["self-hosted", "macos"], "runner_name": "arc-macos-11223344"},
+				{"id": 22, "run_id": 2, "name": "hosted", "status": "in_progress", "labels": ["ubuntu-latest"], "runner_name": "GitHub Actions 3"}
+			]}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	c, _ := ownerClient(t, handler)
+
+	got, err := c.PollJobs(context.Background(), []Repo{{Name: "app"}}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Queued) != 1 || got.Queued[0].ID != 10 || got.Queued[0].Branch != "main" {
+		t.Errorf("queued = %+v, want job 10 on main", got.Queued)
+	}
+	if len(got.Running) != 1 {
+		t.Fatalf("running = %+v, want exactly job 20", got.Running)
+	}
+	r := got.Running[0]
+	if r.ID != 20 || r.Repo != "app" || r.Branch != "feature/x" || r.Name != "test" || r.Runner != "arc-macos-aabbccdd" {
+		t.Errorf("running = %+v", r)
 	}
 }

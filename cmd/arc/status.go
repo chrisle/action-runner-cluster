@@ -19,7 +19,6 @@ func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	cfgPath := fs.String("config", "", "path to arc.yaml")
 	asJSON := fs.Bool("json", false, "emit the raw status document")
-	wide := fs.Bool("wide", false, "list individual runner instances")
 	watch := fs.Duration("watch", 0, "refresh on an interval, e.g. 2s")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -41,7 +40,7 @@ func cmdStatus(args []string) error {
 			enc.SetIndent("", "  ")
 			return enc.Encode(snap)
 		}
-		printStatus(snap, *wide)
+		printStatus(snap)
 		return nil
 	}
 
@@ -59,7 +58,7 @@ func cmdStatus(args []string) error {
 	}
 }
 
-func printStatus(snap orchestrator.Snapshot, wide bool) {
+func printStatus(snap orchestrator.Snapshot) {
 	if snap.UpdatedAt.IsZero() {
 		fmt.Println("No reconcile has completed yet.")
 		return
@@ -91,27 +90,29 @@ func printStatus(snap orchestrator.Snapshot, wide bool) {
 	}
 	tw.Flush()
 
-	if wide {
-		for _, p := range snap.Pools {
-			if len(p.Instances) == 0 {
-				continue
-			}
-			fmt.Printf("\n%s (%s)\n", p.Name, strings.Join(p.Labels, ", "))
-			itw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(itw, "  RUNNER\tINSTANCE\tSTATE\tAGE\tDETAIL")
-			for _, inst := range p.Instances {
-				st := inst.State
-				switch {
-				case inst.Busy:
-					st = "busy"
-				case inst.Online:
-					st = "idle"
-				}
-				fmt.Fprintf(itw, "  %s\t%s\t%s\t%s\t%s\n",
-					inst.Name, shortID(inst.ID), st, inst.Age, inst.Detail)
-			}
-			itw.Flush()
+	for _, p := range snap.Pools {
+		if len(p.Instances) == 0 {
+			continue
 		}
+		fmt.Printf("\n%s (%s)\n", p.Name, strings.Join(p.Labels, ", "))
+		itw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(itw, "  RUNNER\tINSTANCE\tSTATE\tAGE\tRUNNING\tJOB\tDETAIL")
+		for _, inst := range p.Instances {
+			st := inst.State
+			switch {
+			case inst.Busy:
+				st = "busy"
+			case inst.Online:
+				st = "idle"
+			}
+			running := inst.Repo
+			if inst.Branch != "" {
+				running += ":" + inst.Branch
+			}
+			fmt.Fprintf(itw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				inst.Name, shortID(inst.ID), st, inst.Age, running, inst.Job, inst.Detail)
+		}
+		itw.Flush()
 	}
 
 	if len(snap.Unassigned) > 0 {
@@ -229,7 +230,7 @@ func cmdLogs(args []string) error {
 	lines := fs.Int("n", 200, "number of lines to show")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, "Usage: arc logs <pool> <instance-id>\n\n"+
-			"Instance ids come from `arc status -wide`.\n\nFlags:\n")
+			"Instance ids come from `arc status`.\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	positional, err := parsePositional(fs, args)

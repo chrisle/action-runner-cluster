@@ -109,6 +109,11 @@ type InstanceSnapshot struct {
 	Age       string    `json:"age"`
 	CreatedAt time.Time `json:"created_at"`
 	Detail    string    `json:"detail,omitempty"`
+	// Repo, Branch and Job describe the workflow job a busy runner is
+	// executing. Repo is the full "owner/name". Empty when idle.
+	Repo   string `json:"repo,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	Job    string `json:"job,omitempty"`
 }
 
 // New builds an orchestrator and its providers.
@@ -268,7 +273,7 @@ func (o *Orchestrator) reconcileOnce(ctx context.Context) {
 		liveByPool[pool.Name] = o.reap(ctx, pool, instances, byName)
 	}
 
-	jobs, err := o.gh.PendingJobs(ctx, repos, 8)
+	polled, err := o.gh.PollJobs(ctx, repos, 8)
 	if err != nil {
 		var partial *ghapi.PartialError
 		if errors.As(err, &partial) {
@@ -289,8 +294,13 @@ func (o *Orchestrator) reconcileOnce(ctx context.Context) {
 		liveCounts[pool.Name] = len(liveByPool[pool.Name])
 		limits[pool.Name] = o.limitsFor(pool)
 	}
+	jobs := polled.Queued
 	demand := o.matcher.AssignDemand(jobs, liveCounts, limits)
 	snap.Unassigned = demand.Unassigned
+	running := make(map[string]ghapi.Job, len(polled.Running))
+	for _, j := range polled.Running {
+		running[j.Runner] = j
+	}
 	o.discountForeignIdle(&demand, runners, liveByPool)
 
 	if len(demand.Unassigned) > 0 {
@@ -302,7 +312,7 @@ func (o *Orchestrator) reconcileOnce(ctx context.Context) {
 
 	// 5. Act, one pool at a time.
 	for _, pool := range o.cfg.Pools {
-		ps := o.applyPool(ctx, pool, liveByPool[pool.Name], byName,
+		ps := o.applyPool(ctx, pool, liveByPool[pool.Name], byName, running,
 			demand.ByPool[pool.Name], demand.Jobs[pool.Name])
 		if e := poolErr[pool.Name]; e != "" {
 			ps.Error = e
@@ -405,10 +415,11 @@ func (o *Orchestrator) destroyInstance(ctx context.Context, pool *config.Pool, i
 	return nil
 }
 
-// applyPool computes and executes the decision for a single pool. jobs are the
-// queued jobs assigned to this pool, which in personal-account mode determine
-// the repo each new runner registers against.
-func (o *Orchestrator) applyPool(ctx context.Context, pool *config.Pool, live []provider.Instance, byName map[string]ghapi.Runner, demand int, jobs []ghapi.Job) PoolSnapshot {
+// applyPool computes and executes the decision for a single pool. running maps
+// runner name to the job it is executing. jobs are the queued jobs assigned to
+// this pool, which in personal-account mode determine the repo each new runner
+// registers against.
+func (o *Orchestrator) applyPool(ctx context.Context, pool *config.Pool, live []provider.Instance, byName map[string]ghapi.Runner, running map[string]ghapi.Job, demand int, jobs []ghapi.Job) PoolSnapshot {
 	lim := o.limitsFor(pool)
 	drained := o.isDrained(pool.Name)
 	if drained {
@@ -434,6 +445,11 @@ func (o *Orchestrator) applyPool(ctx context.Context, pool *config.Pool, live []
 		case known && r.Busy:
 			st.Busy++
 			snap.Online, snap.Busy = true, true
+			if j, ok := running[inst.RunnerName]; ok {
+				snap.Repo = o.cfg.GitHub.Entity() + "/" + j.Repo
+				snap.Branch = j.Branch
+				snap.Job = j.Name
+			}
 		case known && r.Online():
 			st.Idle++
 			snap.Online = true

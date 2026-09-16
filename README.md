@@ -52,7 +52,7 @@ coordinate through GitHub.
 Then check on it:
 
 ```sh
-arc status              # -wide for individual runners, -watch 2s to refresh
+arc status              # pools, every runner and what it is running; -watch 2s to refresh
 arc scale macos -max 6  # change limits without a restart
 arc uninstall           # remove this host cleanly
 ```

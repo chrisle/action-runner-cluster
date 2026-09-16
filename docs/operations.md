@@ -9,7 +9,7 @@
 | `arc install [-max N]` | Install and start the background service |
 | `arc start` / `arc stop` | Control the installed service |
 | `arc uninstall [-yes] [-force] [-keep-config]` | Remove the service, this host's runners and arc's files |
-| `arc status [-wide] [-json] [-watch 2s]` | Pools, runners, queued jobs |
+| `arc status [-json] [-watch 2s]` | Pools, runners, queued jobs |
 | `arc scale <pool> [-min N] [-max N] [-reset]` | Change limits at runtime |
 | `arc drain <pool>` / `arc resume <pool>` | Stop / restart runner creation |
 | `arc logs <pool> <instance-id>` | Tail a runner's output |
@@ -44,8 +44,7 @@ file, the file's pools win.
 ## Checking on it
 
 ```sh
-arc status                     # pools, counts, and why each is at its target
-arc status -wide               # plus every individual runner instance
+arc status                     # pools, every runner, and what each busy one is running
 arc status -watch 2s           # refresh in place
 arc logs macos <instance-id>   # tail one runner's output
 ```

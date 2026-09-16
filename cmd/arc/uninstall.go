@@ -170,7 +170,7 @@ func checkNoBusyRunners(ctx context.Context, orch *orchestrator.Orchestrator) er
 		return nil
 	}
 	return fmt.Errorf("%d runner(s) are executing a job: %s\n"+
-		"Wait for them to finish (`arc status -wide`), or pass -force to uninstall anyway "+
+		"Wait for them to finish (`arc status`), or pass -force to uninstall anyway "+
 		"and fail those jobs", len(busy), strings.Join(busy, ", "))
 }
 

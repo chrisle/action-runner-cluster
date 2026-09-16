@@ -24,16 +24,29 @@ type Repo struct {
 	} `json:"owner"`
 }
 
-// Job is a workflow job that is waiting for a runner.
+// Job is a self-hosted workflow job that is waiting for a runner or running
+// on one.
 type Job struct {
 	ID       int64     `json:"id"`
 	RunID    int64     `json:"run_id"`
 	Repo     string    `json:"repo"`
+	Branch   string    `json:"branch"`
 	Name     string    `json:"name"`
 	Labels   []string  `json:"labels"`
 	Status   string    `json:"status"` // queued | in_progress | completed
 	Started  time.Time `json:"started_at"`
 	QueuedAt time.Time `json:"queued_at"`
+	// Runner is the name of the runner executing the job. Empty while queued.
+	Runner string `json:"runner,omitempty"`
+}
+
+// Jobs is one poll's worth of self-hosted work across the watched repos.
+type Jobs struct {
+	// Queued jobs are waiting for a runner and drive scaling.
+	Queued []Job
+	// Running jobs are executing; each names its runner, which is how
+	// `arc status` says what a busy runner is working on.
+	Running []Job
 }
 
 // SelfHosted reports whether the job asks for a self-hosted runner.
@@ -165,14 +178,14 @@ func matchAny(patterns []string, name string) bool {
 	return false
 }
 
-// PendingJobs returns every self-hosted job across the given repos that is
-// waiting for a runner.
+// PollJobs returns every self-hosted job across the given repos that is
+// waiting for a runner or running on one.
 //
 // There is no org-wide "list queued jobs" endpoint, so this walks each repo's
 // active workflow runs and inspects their jobs. Every request is conditional on
 // an ETag: repos with no new activity answer 304, which GitHub does not charge
 // against the rate limit, so polling a large org stays affordable.
-func (c *Client) PendingJobs(ctx context.Context, repos []Repo, concurrency int) ([]Job, error) {
+func (c *Client) PollJobs(ctx context.Context, repos []Repo, concurrency int) (Jobs, error) {
 	if concurrency < 1 {
 		concurrency = 8
 	}
@@ -198,14 +211,14 @@ func (c *Client) PendingJobs(ctx context.Context, repos []Repo, concurrency int)
 			}
 			defer func() { <-sem }()
 
-			jobs, err := c.repoPendingJobs(ctx, repo)
+			jobs, err := c.repoActiveJobs(ctx, repo)
 			results[i] = result{jobs: jobs, err: err}
 		}(i, repo)
 	}
 	wg.Wait()
 
 	var (
-		jobs []Job
+		out  Jobs
 		errs []string
 	)
 	for i, r := range results {
@@ -215,18 +228,25 @@ func (c *Client) PendingJobs(ctx context.Context, repos []Repo, concurrency int)
 			errs = append(errs, fmt.Sprintf("%s: %v", repos[i].Name, r.err))
 			continue
 		}
-		jobs = append(jobs, r.jobs...)
+		for _, j := range r.jobs {
+			if j.Status == "queued" {
+				out.Queued = append(out.Queued, j)
+			} else {
+				out.Running = append(out.Running, j)
+			}
+		}
 	}
 
-	sort.Slice(jobs, func(i, j int) bool { return jobs[i].ID < jobs[j].ID })
+	sort.Slice(out.Queued, func(i, j int) bool { return out.Queued[i].ID < out.Queued[j].ID })
+	sort.Slice(out.Running, func(i, j int) bool { return out.Running[i].ID < out.Running[j].ID })
 
 	if len(errs) > 0 && len(errs) == len(repos) {
-		return jobs, fmt.Errorf("all repo polls failed: %s", strings.Join(errs, "; "))
+		return out, fmt.Errorf("all repo polls failed: %s", strings.Join(errs, "; "))
 	}
 	if len(errs) > 0 {
-		return jobs, &PartialError{Failures: errs}
+		return out, &PartialError{Failures: errs}
 	}
-	return jobs, nil
+	return out, nil
 }
 
 // PartialError reports that some repos failed while others succeeded.
@@ -236,8 +256,10 @@ func (e *PartialError) Error() string {
 	return fmt.Sprintf("%d repo poll(s) failed: %s", len(e.Failures), strings.Join(e.Failures, "; "))
 }
 
-func (c *Client) repoPendingJobs(ctx context.Context, repo Repo) ([]Job, error) {
-	runIDs := map[int64]bool{}
+// repoActiveJobs returns the repo's queued and in-progress self-hosted jobs.
+func (c *Client) repoActiveJobs(ctx context.Context, repo Repo) ([]Job, error) {
+	// Run id -> head branch. The branch lives on the run, not the job.
+	runs := map[int64]string{}
 
 	// A run that is "in_progress" can still hold queued jobs: matrix legs and
 	// jobs gated on `needs:` enter the queue after the run has already started.
@@ -249,23 +271,24 @@ func (c *Client) repoPendingJobs(ctx context.Context, repo Repo) ([]Job, error) 
 
 		var out struct {
 			WorkflowRuns []struct {
-				ID     int64  `json:"id"`
-				Status string `json:"status"`
+				ID         int64  `json:"id"`
+				Status     string `json:"status"`
+				HeadBranch string `json:"head_branch"`
 			} `json:"workflow_runs"`
 		}
 		if _, err := c.getJSON(ctx, p, key, &out); err != nil {
 			return nil, err
 		}
 		for _, r := range out.WorkflowRuns {
-			runIDs[r.ID] = true
+			runs[r.ID] = r.HeadBranch
 		}
 	}
-	if len(runIDs) == 0 {
+	if len(runs) == 0 {
 		return nil, nil
 	}
 
-	ids := make([]int64, 0, len(runIDs))
-	for id := range runIDs {
+	ids := make([]int64, 0, len(runs))
+	for id := range runs {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
@@ -296,18 +319,20 @@ func (c *Client) repoPendingJobs(ctx context.Context, repo Repo) ([]Job, error) 
 		}
 
 		for _, j := range out.Jobs {
-			if j.Status != "queued" {
+			if j.Status != "queued" && j.Status != "in_progress" {
 				continue
 			}
 			job := Job{
 				ID:       j.ID,
 				RunID:    j.RunID,
 				Repo:     repo.Name,
+				Branch:   runs[runID],
 				Name:     j.Name,
 				Labels:   j.Labels,
 				Status:   j.Status,
 				Started:  j.StartedAt,
 				QueuedAt: j.CreatedAt,
+				Runner:   j.RunnerName,
 			}
 			if !job.SelfHosted() {
 				continue
