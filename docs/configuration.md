@@ -128,9 +128,17 @@ github:
   repos:
     active_within: 720h        # skip repos with no push in 30 days
     include: ["service-*"]     # globs; an allowlist when non-empty
+    # include_url: http://192.168.1.10:8731/repos.txt
     exclude: ["archived-*"]
     refresh_interval: 10m
 ```
+
+`include_url` loads a shared newline-delimited allowlist at each repository
+refresh. Blank lines and `#` comments are ignored. Arc keeps its last good repo
+list if the shared URL is temporarily unavailable, and refuses an empty remote
+list so a broken file cannot silently expand polling to every repository.
+In 1Password zero-config mode, set `ARC_REPOS_INCLUDE_URL` to apply the same
+shared list without creating a config file or giving up credential refresh.
 
 Every request is conditional on an ETag, and GitHub does not charge a `304`
 against the rate limit — so quiet repos are effectively free to poll.

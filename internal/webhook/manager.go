@@ -155,6 +155,7 @@ func (m *Manager) Unregister(ctx context.Context) (int, error) {
 func (m *Manager) repos(ctx context.Context) ([]ghapi.Repo, error) {
 	return m.gh.ListRepos(ctx, ghapi.RepoFilterOpts{
 		Include:      m.cfg.GitHub.Repos.Include,
+		IncludeURL:   m.cfg.GitHub.Repos.IncludeURL,
 		Exclude:      m.cfg.GitHub.Repos.Exclude,
 		ActiveWithin: m.cfg.GitHub.Repos.ActiveWithin.Duration(),
 		Archived:     m.cfg.GitHub.Repos.Archived,

@@ -318,6 +318,7 @@ func verifyGitHubLive(cfg *config.Config) (string, error) {
 
 	repos, err := gh.ListRepos(ctx, ghapi.RepoFilterOpts{
 		Include:      resolved.GitHub.Repos.Include,
+		IncludeURL:   resolved.GitHub.Repos.IncludeURL,
 		Exclude:      resolved.GitHub.Repos.Exclude,
 		ActiveWithin: resolved.GitHub.Repos.ActiveWithin.Duration(),
 		Archived:     resolved.GitHub.Repos.Archived,

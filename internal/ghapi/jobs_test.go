@@ -3,6 +3,8 @@ package ghapi
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -70,6 +72,35 @@ func TestRepoFilterMatch(t *testing.T) {
 				t.Errorf("match(%q) = %v, want %v", tt.repo, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFetchRepoInclude(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("# fleet repos\nrbxport\n\n nowplaying3 \n"))
+	}))
+	defer srv.Close()
+
+	c := &Client{http: srv.Client()}
+	got, err := c.fetchRepoInclude(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"rbxport", "nowplaying3"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("repos = %v, want %v", got, want)
+	}
+}
+
+func TestFetchRepoIncludeRejectsEmptyList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("# no repositories\n\n"))
+	}))
+	defer srv.Close()
+
+	c := &Client{http: srv.Client()}
+	if _, err := c.fetchRepoInclude(context.Background(), srv.URL); err == nil {
+		t.Fatal("expected empty remote allowlist to fail")
 	}
 }
 

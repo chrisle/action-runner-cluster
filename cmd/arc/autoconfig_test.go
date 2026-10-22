@@ -63,6 +63,22 @@ func TestAutoConfigReadsVaultOnceThenCache(t *testing.T) {
 	}
 }
 
+func TestAutoConfigUsesSharedRepoAllowlist(t *testing.T) {
+	stubAutoConfig(t)
+	t.Setenv("ARC_REPOS_INCLUDE_URL", "http://192.168.1.10:8731/repos.txt")
+
+	cfg, _, err := autoConfig(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.GitHub.Repos.IncludeURL; got != "http://192.168.1.10:8731/repos.txt" {
+		t.Fatalf("include URL = %q", got)
+	}
+	if got := cfg.GitHub.Repos.ActiveWithin.Duration(); got != 0 {
+		t.Fatalf("active-within fallback = %s, want disabled for shared allowlist", got)
+	}
+}
+
 func TestAutoConfigRefreshesWhenCachedTokenRejected(t *testing.T) {
 	opCalls, vaultItem := stubAutoConfig(t)
 

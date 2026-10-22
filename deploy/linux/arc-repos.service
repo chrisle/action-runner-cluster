@@ -1,0 +1,17 @@
+[Unit]
+Description=Arc shared repository allowlist
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chrisle
+Group=chrisle
+ExecStart=/usr/bin/python3 -m http.server 8731 --bind 0.0.0.0 --directory /etc/arc
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

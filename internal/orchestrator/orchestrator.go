@@ -728,6 +728,7 @@ func (o *Orchestrator) pollableRepos(ctx context.Context) ([]ghapi.Repo, error) 
 
 	repos, err := o.gh.ListRepos(ctx, ghapi.RepoFilterOpts{
 		Include:      o.cfg.GitHub.Repos.Include,
+		IncludeURL:   o.cfg.GitHub.Repos.IncludeURL,
 		Exclude:      o.cfg.GitHub.Repos.Exclude,
 		ActiveWithin: o.cfg.GitHub.Repos.ActiveWithin.Duration(),
 		Archived:     o.cfg.GitHub.Repos.Archived,

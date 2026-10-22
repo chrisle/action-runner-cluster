@@ -230,6 +230,7 @@ func autoConfig(maxRunners int) (*config.Config, *vaultAuth, error) {
 	cfg := &config.Config{}
 	cfg.GitHub.Token = item.Token
 	cfg.GitHub.Webhook = true
+	cfg.GitHub.Repos.IncludeURL = os.Getenv("ARC_REPOS_INCLUDE_URL")
 	if accountType == "Organization" {
 		cfg.GitHub.Org = item.Login
 	} else {

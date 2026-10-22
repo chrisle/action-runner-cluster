@@ -79,6 +79,7 @@ func cmdDoctor(args []string) error {
 			var err error
 			repos, err = gh.ListRepos(ctx, ghapi.RepoFilterOpts{
 				Include:      cfg.GitHub.Repos.Include,
+				IncludeURL:   cfg.GitHub.Repos.IncludeURL,
 				Exclude:      cfg.GitHub.Repos.Exclude,
 				ActiveWithin: cfg.GitHub.Repos.ActiveWithin.Duration(),
 				Archived:     cfg.GitHub.Repos.Archived,

@@ -1,0 +1,6 @@
+# Repositories whose workflows use the self-hosted Arc fleet.
+# One exact repository name or glob per line.
+nowplaying3
+rbx-restore
+rbxport
+work-it

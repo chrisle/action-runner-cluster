@@ -73,6 +73,9 @@ type AppAuth struct {
 type RepoFilter struct {
 	// Include, if non-empty, is an allowlist of repo names (glob supported).
 	Include []string `yaml:"include,omitempty"`
+	// IncludeURL points at a shared newline-delimited allowlist. Blank lines and
+	// lines beginning with # are ignored. This lets a fleet share one list.
+	IncludeURL string `yaml:"include_url,omitempty"`
 	// Exclude drops repo names from the set (glob supported).
 	Exclude []string `yaml:"exclude,omitempty"`
 	// ActiveWithin only polls repos pushed to within this window. Zero disables
@@ -360,7 +363,7 @@ func (c *Config) applyDefaults() {
 	// A personal account can own hundreds of repos, and in owner mode each
 	// watched repo costs API traffic. Unless the user scoped the set
 	// explicitly, only watch repos with recent pushes.
-	if c.GitHub.Owner != "" && len(c.GitHub.Repos.Include) == 0 && c.GitHub.Repos.ActiveWithin == 0 {
+	if c.GitHub.Owner != "" && len(c.GitHub.Repos.Include) == 0 && c.GitHub.Repos.IncludeURL == "" && c.GitHub.Repos.ActiveWithin == 0 {
 		c.GitHub.Repos.ActiveWithin = Duration(DefaultOwnerActiveWithin)
 	}
 	if c.GitHub.APIURL == "" {

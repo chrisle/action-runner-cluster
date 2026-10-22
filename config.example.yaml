@@ -40,6 +40,8 @@ github:
     # repositories that will never queue a job again.
     active_within: 720h # 30 days
     # include: ["service-*", "app"]
+    # Or share one newline-delimited allowlist across every arc host.
+    # include_url: http://192.168.1.10:8731/repos.txt
     # exclude: ["archived-*"]
     refresh_interval: 10m
 

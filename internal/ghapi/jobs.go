@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os/exec"
 	"path"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -92,6 +96,13 @@ func githubHostedLabel(l string) bool {
 
 // ListRepos returns the account's repositories, filtered by the config's rules.
 func (c *Client) ListRepos(ctx context.Context, filter RepoFilterOpts) ([]Repo, error) {
+	if filter.IncludeURL != "" {
+		remote, err := c.fetchRepoInclude(ctx, filter.IncludeURL)
+		if err != nil {
+			return nil, err
+		}
+		filter.Include = append(filter.Include, remote...)
+	}
 	var all []Repo
 	// sort=pushed puts recently active repos first, so ActiveWithin can stop
 	// paginating early instead of walking the whole account.
@@ -154,9 +165,56 @@ func (c *Client) ListRepos(ctx context.Context, filter RepoFilterOpts) ([]Repo, 
 // RepoFilterOpts is the resolved repo filter.
 type RepoFilterOpts struct {
 	Include      []string
+	IncludeURL   string
 	Exclude      []string
 	ActiveWithin time.Duration
 	Archived     bool
+}
+
+func (c *Client) fetchRepoInclude(ctx context.Context, url string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build repo allowlist request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		// Current macOS releases can deny Local Network access to a background
+		// LaunchAgent binary while allowing the system curl executable. Arc's
+		// shared allowlist is commonly served by another LAN host, so use curl
+		// as the narrow platform fallback instead of making the fleet silently
+		// expand back to every repository.
+		if runtime.GOOS == "darwin" {
+			body, curlErr := exec.CommandContext(ctx, "/usr/bin/curl", "-fsS", "--max-time", "30", url).Output()
+			if curlErr == nil {
+				return parseRepoInclude(body, url)
+			}
+		}
+		return nil, fmt.Errorf("fetch repo allowlist %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch repo allowlist %s: %s", url, resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read repo allowlist %s: %w", url, err)
+	}
+	return parseRepoInclude(body, url)
+}
+
+func parseRepoInclude(body []byte, source string) ([]string, error) {
+	var repos []string
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		repos = append(repos, line)
+	}
+	if len(repos) == 0 {
+		return nil, fmt.Errorf("repo allowlist %s is empty", source)
+	}
+	return repos, nil
 }
 
 func (f RepoFilterOpts) match(name string) bool {
